@@ -1,0 +1,101 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1.0"
+    />
+    <title>Subtitle Live Translator</title>
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <div class="app-shell">
+      <header class="titlebar">
+        <div class="brand">
+          <span class="brand-kicker">LIVE SUBTITLE</span>
+          <h1>本地实时双语字幕翻译</h1>
+        </div>
+        <div class="titlebar-actions no-drag">
+          <button id="pinToggle" class="ghost-button">置顶</button>
+          <button id="settingsToggle" class="ghost-button">设置</button>
+          <button id="minimizeButton" class="ghost-button">最小化</button>
+          <button id="closeButton" class="ghost-button danger">关闭</button>
+        </div>
+      </header>
+
+      <main class="content">
+        <section class="subtitle-stage">
+          <div class="stage-label">字幕预览</div>
+          <div id="subtitleList" class="subtitle-list">
+            <article class="subtitle-card">
+              <p class="original-line">Press start to listen.</p>
+              <p class="translated-line">点击开始后，软件会自动识别中英文并翻译。</p>
+            </article>
+          </div>
+        </section>
+
+        <aside id="settingsPanel" class="settings-panel hidden">
+          <div class="settings-group">
+            <label for="pythonPathInput">Python 路径</label>
+            <input
+              id="pythonPathInput"
+              type="text"
+              placeholder="python"
+              autocomplete="off"
+            />
+          </div>
+
+          <div class="settings-group">
+            <label for="whisperModelInput">Whisper 模型</label>
+            <input
+              id="whisperModelInput"
+              type="text"
+              placeholder="medium"
+              autocomplete="off"
+            />
+          </div>
+
+          <div class="settings-group inline-group">
+            <label for="showOriginalToggle">显示原文</label>
+            <input id="showOriginalToggle" type="checkbox" checked />
+          </div>
+
+          <div class="settings-group">
+            <label for="fontScaleRange">字幕大小</label>
+            <input id="fontScaleRange" type="range" min="0.85" max="1.35" step="0.05" />
+          </div>
+
+          <div class="settings-group">
+            <label for="opacityRange">窗口透明度</label>
+            <input id="opacityRange" type="range" min="0.7" max="1" step="0.02" />
+          </div>
+
+          <div class="settings-group">
+            <label for="chunkRange">识别节奏</label>
+            <input id="chunkRange" type="range" min="3000" max="8000" step="500" />
+            <small id="chunkHint"></small>
+          </div>
+
+          <div class="settings-group muted-copy">
+            <p>当前版本使用常驻本地模型，不依赖 OpenAI API Key。</p>
+            <p>第一次识别会加载 medium 模型，后续片段会明显更快。</p>
+          </div>
+        </aside>
+      </main>
+
+      <footer class="control-bar no-drag">
+        <div class="left-controls">
+          <button id="startButton" class="primary-button">开始监听</button>
+          <button id="stopButton" class="ghost-button" disabled>停止</button>
+        </div>
+        <div class="status-wrap">
+          <span id="statusDot" class="status-dot idle"></span>
+          <span id="statusText">准备就绪</span>
+        </div>
+      </footer>
+    </div>
+
+    <script type="module" src="./renderer.js"></script>
+  </body>
+</html>

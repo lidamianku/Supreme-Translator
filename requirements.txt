@@ -1,0 +1,3 @@
+faster-whisper==1.1.1
+argostranslate==1.9.6
+opencc-python-reimplemented==0.1.7

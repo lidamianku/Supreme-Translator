@@ -1,0 +1,7 @@
+{
+  "name": "subtitle-live-translator",
+  "version": "0.2.0",
+  "description": "A local Windows desktop app for live English-to-Chinese subtitle translation.",
+  "main": "main.js",
+  "type": "module"
+}
