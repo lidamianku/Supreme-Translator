@@ -6,16 +6,12 @@
       name="viewport"
       content="width=device-width, initial-scale=1.0"
     />
-    <title>Subtitle Live Translator</title>
+    <title>Supreme Translator</title>
     <link rel="stylesheet" href="./styles.css" />
   </head>
   <body>
     <div class="app-shell">
       <header class="titlebar">
-        <div class="brand">
-          <span class="brand-kicker">LIVE SUBTITLE</span>
-          <h1>本地实时双语字幕翻译</h1>
-        </div>
         <div class="titlebar-actions no-drag">
           <button id="pinToggle" class="ghost-button">置顶</button>
           <button id="settingsToggle" class="ghost-button">设置</button>
@@ -24,18 +20,33 @@
         </div>
       </header>
 
-      <main class="content">
+      <main id="contentShell" class="content content-collapsed">
         <section class="subtitle-stage">
-          <div class="stage-label">字幕预览</div>
           <div id="subtitleList" class="subtitle-list">
             <article class="subtitle-card">
               <p class="original-line">Press start to listen.</p>
-              <p class="translated-line">点击开始后，软件会自动识别中英文并翻译。</p>
+              <p class="translated-line">点击开始后，软件会自动识别中文或英文并翻译。</p>
             </article>
           </div>
         </section>
 
         <aside id="settingsPanel" class="settings-panel hidden">
+          <div class="settings-group">
+            <label for="audioSourceSelect">音频来源</label>
+            <select id="audioSourceSelect">
+              <option value="microphone">麦克风</option>
+              <option value="system">系统声音（浏览器/播放器/本机软件）</option>
+            </select>
+          </div>
+
+          <div class="settings-group">
+            <label for="backendModeSelect">识别模式</label>
+            <select id="backendModeSelect">
+              <option value="local">本地模型（Whisper + Argos）</option>
+              <option value="mimo">MiMo-V2-Omni 云端模式</option>
+            </select>
+          </div>
+
           <div class="settings-group">
             <label for="pythonPathInput">Python 路径</label>
             <input
@@ -52,6 +63,36 @@
               id="whisperModelInput"
               type="text"
               placeholder="medium"
+              autocomplete="off"
+            />
+          </div>
+
+          <div class="settings-group">
+            <label for="apiBaseUrlInput">MiMo API 地址</label>
+            <input
+              id="apiBaseUrlInput"
+              type="text"
+              placeholder="https://api.xiaomimimo.com/v1"
+              autocomplete="off"
+            />
+          </div>
+
+          <div class="settings-group">
+            <label for="cloudModelInput">MiMo 模型名</label>
+            <input
+              id="cloudModelInput"
+              type="text"
+              placeholder="mimo-v2-omni"
+              autocomplete="off"
+            />
+          </div>
+
+          <div class="settings-group">
+            <label for="mimoApiKeyInput">MiMo API Key</label>
+            <input
+              id="mimoApiKeyInput"
+              type="password"
+              placeholder="请输入你的 MiMo API Key"
               autocomplete="off"
             />
           </div>
@@ -73,13 +114,13 @@
 
           <div class="settings-group">
             <label for="chunkRange">识别节奏</label>
-            <input id="chunkRange" type="range" min="3000" max="8000" step="500" />
+            <input id="chunkRange" type="range" min="2000" max="8000" step="400" />
             <small id="chunkHint"></small>
           </div>
 
           <div class="settings-group muted-copy">
-            <p>当前版本使用常驻本地模型，不依赖 OpenAI API Key。</p>
-            <p>第一次识别会加载 medium 模型，后续片段会明显更快。</p>
+            <p>本地模式适合离线使用，不需要 API Key。</p>
+            <p>MiMo 模式会把音频片段发给云端模型，一次返回原文和翻译，适合直接测试全模态能力。</p>
           </div>
         </aside>
       </main>

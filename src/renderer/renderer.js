@@ -5,9 +5,15 @@ const statusText = document.getElementById("statusText");
 const statusDot = document.getElementById("statusDot");
 const settingsToggle = document.getElementById("settingsToggle");
 const settingsPanel = document.getElementById("settingsPanel");
+const contentShell = document.getElementById("contentShell");
 const pinToggle = document.getElementById("pinToggle");
+const audioSourceSelect = document.getElementById("audioSourceSelect");
+const backendModeSelect = document.getElementById("backendModeSelect");
 const pythonPathInput = document.getElementById("pythonPathInput");
 const whisperModelInput = document.getElementById("whisperModelInput");
+const apiBaseUrlInput = document.getElementById("apiBaseUrlInput");
+const cloudModelInput = document.getElementById("cloudModelInput");
+const mimoApiKeyInput = document.getElementById("mimoApiKeyInput");
 const showOriginalToggle = document.getElementById("showOriginalToggle");
 const fontScaleRange = document.getElementById("fontScaleRange");
 const opacityRange = document.getElementById("opacityRange");
@@ -24,10 +30,23 @@ let processorNode = null;
 let chunkTimer = null;
 let listening = false;
 let processingQueue = false;
+let requestInFlight = false;
 let lastTranscript = "";
+let consecutiveErrors = 0;
+let droppedChunkCount = 0;
+let latestSubtitle = {
+  transcript: "",
+  translation: "点击开始后，软件会自动识别中文或英文并翻译。"
+};
 const audioQueue = [];
-const subtitles = [];
 let pcmChunks = [];
+const MAX_AUDIO_QUEUE = 1;
+const MAX_CONSECUTIVE_ERRORS = 4;
+
+function syncCompactWindowMode() {
+  const compact = window.innerHeight <= 210;
+  document.body.classList.toggle("compact-window", compact);
+}
 
 function setStatus(mode, text) {
   statusDot.className = `status-dot ${mode}`;
@@ -43,7 +62,7 @@ function normalizeText(text) {
 }
 
 function formatChunkHint(chunkMs) {
-  return `每 ${Number(chunkMs) / 1000} 秒发送一次语音片段`;
+  return `每 ${Number(chunkMs) / 1000} 秒发送一段语音`;
 }
 
 function mergeFloat32Chunks(chunks) {
@@ -97,43 +116,59 @@ function encodeWav(samples, sampleRate) {
   return new Blob([buffer], { type: "audio/wav" });
 }
 
-function renderSubtitles() {
+function renderSubtitle() {
   subtitleList.innerHTML = "";
 
-  const items = subtitles.length
-    ? subtitles
-    : [
-        {
-          transcript: "Press start to listen for English speech.",
-          translation: "点击开始后，软件会自动识别中英文并翻译。"
-        }
-      ];
+  const card = document.createElement("article");
+  card.className = "subtitle-card";
 
-  items.forEach((item) => {
-    const card = document.createElement("article");
-    card.className = "subtitle-card";
+  const contentSize = Math.max(
+    latestSubtitle.transcript?.length || 0,
+    latestSubtitle.translation?.length || 0
+  );
 
-    if (settings.showOriginal) {
-      const original = document.createElement("p");
-      original.className = "original-line";
-      original.textContent = item.transcript;
-      card.appendChild(original);
-    }
+  if (contentSize >= 34) {
+    card.dataset.size = "wide";
+  } else if (contentSize >= 18) {
+    card.dataset.size = "medium";
+  } else {
+    card.dataset.size = "compact";
+  }
 
-    const translated = document.createElement("p");
-    translated.className = "translated-line";
-    translated.textContent = item.translation || " ";
-    card.appendChild(translated);
+  if (settings?.showOriginal) {
+    const original = document.createElement("p");
+    original.className = "original-line";
+    original.textContent = latestSubtitle.transcript || " ";
+    card.appendChild(original);
+  }
 
-    subtitleList.appendChild(card);
-  });
+  const translated = document.createElement("p");
+  translated.className = "translated-line";
+  translated.textContent = latestSubtitle.translation || " ";
+  card.appendChild(translated);
 
-  subtitleList.scrollTop = subtitleList.scrollHeight;
+  subtitleList.appendChild(card);
+}
+
+function syncSettingsVisibility() {
+  const localMode = settings.backendMode !== "mimo";
+  whisperModelInput.disabled = !localMode;
+  pythonPathInput.disabled = false;
+  apiBaseUrlInput.disabled = localMode;
+  cloudModelInput.disabled = localMode;
+  mimoApiKeyInput.disabled = localMode;
+}
+
+function syncLayoutMode() {
+  const settingsOpen = !settingsPanel.classList.contains("hidden");
+  contentShell.classList.toggle("content-collapsed", !settingsOpen);
+  contentShell.classList.toggle("content-expanded", settingsOpen);
 }
 
 async function persistSettings() {
   settings = await window.subtitleApp.saveSettings(settings);
   document.documentElement.style.setProperty("--font-scale", String(settings.fontScale));
+  syncSettingsVisibility();
   try {
     await window.subtitleApp.setOpacity(settings.opacity);
   } catch (error) {
@@ -145,7 +180,6 @@ async function loadSettings() {
   settings = await window.subtitleApp.loadSettings();
   if (settings.whisperModel === "base" && settings.chunkMs === 3200) {
     settings.whisperModel = "medium";
-    settings.chunkMs = 4500;
     settings = await window.subtitleApp.saveSettings(settings);
   }
   if (settings.whisperModel === "small") {
@@ -153,8 +187,13 @@ async function loadSettings() {
     settings = await window.subtitleApp.saveSettings(settings);
   }
 
+  backendModeSelect.value = settings.backendMode || "local";
+  audioSourceSelect.value = settings.audioSource || "microphone";
   pythonPathInput.value = settings.pythonPath || "python";
   whisperModelInput.value = settings.whisperModel || "medium";
+  apiBaseUrlInput.value = settings.apiBaseUrl || "https://api.xiaomimimo.com/v1";
+  cloudModelInput.value = settings.cloudModel || "mimo-v2-omni";
+  mimoApiKeyInput.value = settings.mimoApiKey || "";
   showOriginalToggle.checked = settings.showOriginal;
   fontScaleRange.value = settings.fontScale;
   opacityRange.value = settings.opacity;
@@ -162,22 +201,20 @@ async function loadSettings() {
   chunkHint.textContent = formatChunkHint(settings.chunkMs);
   pinToggle.classList.toggle("is-active", Boolean(settings.alwaysOnTop));
   document.documentElement.style.setProperty("--font-scale", String(settings.fontScale));
+  syncSettingsVisibility();
   try {
     await window.subtitleApp.setOpacity(settings.opacity);
     await window.subtitleApp.setAlwaysOnTop(Boolean(settings.alwaysOnTop));
   } catch (error) {
     console.warn("Window settings were loaded, but one window option failed", error);
   }
-  renderSubtitles();
+  renderSubtitle();
   setStatus("idle", "准备就绪");
 }
 
-function pushSubtitle(transcript, translation) {
-  subtitles.push({ transcript, translation });
-  if (subtitles.length > 3) {
-    subtitles.shift();
-  }
-  renderSubtitles();
+function updateSubtitle(transcript, translation) {
+  latestSubtitle = { transcript, translation };
+  renderSubtitle();
 }
 
 async function processAudioQueue() {
@@ -194,7 +231,11 @@ async function processAudioQueue() {
       continue;
     }
 
-    setStatus("busy", "正在用本地模型识别和翻译...");
+    requestInFlight = true;
+    const busyText = settings.backendMode === "mimo"
+      ? "MiMo 正在识别并翻译这段语音..."
+      : "正在用本地模型识别并翻译...";
+    setStatus("busy", busyText);
 
     try {
       const result = await window.subtitleApp.transcribeAndTranslate({
@@ -203,6 +244,7 @@ async function processAudioQueue() {
         settings
       });
 
+      requestInFlight = false;
       const transcript = result.transcript?.trim();
       const translation = result.translation?.trim();
 
@@ -221,18 +263,44 @@ async function processAudioQueue() {
         continue;
       }
 
+      consecutiveErrors = 0;
       lastTranscript = normalized;
-      pushSubtitle(transcript, translation);
+      droppedChunkCount = 0;
+      updateSubtitle(transcript, translation);
       setStatus("listening", "正在监听...");
     } catch (error) {
+      requestInFlight = false;
       console.error(error);
-      setStatus("idle", error.message || "本地识别失败，请检查 Python 与模型安装");
-      stopListening();
-      break;
+      consecutiveErrors += 1;
+
+      if (!listening) {
+        break;
+      }
+
+      if (consecutiveErrors >= MAX_CONSECUTIVE_ERRORS) {
+        await window.subtitleApp.resetBackend().catch(() => {});
+        requestInFlight = false;
+        processingQueue = false;
+        audioQueue.length = 0;
+        setStatus("idle", "连续多次请求失败，已暂停输出。请检查 MiMo 接口、网络或把识别节奏调慢。");
+        continue;
+      }
+
+      const fallbackText = settings.backendMode === "mimo"
+        ? "MiMo 请求失败，已跳过这一段并继续监听。"
+        : "本地识别失败，已跳过这一段并继续监听。";
+      const detail = error?.message ? ` ${error.message}` : "";
+
+      setStatus("listening", `${fallbackText}${detail}`);
     }
   }
 
   processingQueue = false;
+  requestInFlight = false;
+
+  if (listening && consecutiveErrors < MAX_CONSECUTIVE_ERRORS) {
+    setStatus("listening", "正在监听...");
+  }
 }
 
 function blobToBase64(blob) {
@@ -252,11 +320,27 @@ async function handleChunk(blob) {
     return;
   }
 
+  if (consecutiveErrors >= MAX_CONSECUTIVE_ERRORS) {
+    return;
+  }
+
   const audioBase64 = await blobToBase64(blob);
+
+  if (audioQueue.length >= MAX_AUDIO_QUEUE || requestInFlight) {
+    audioQueue.length = 0;
+    droppedChunkCount += 1;
+    if (droppedChunkCount >= 2) {
+      setStatus("idle", "云端响应过慢，当前已跟不上实时输入。请把识别节奏调慢到 5 到 6 秒，或先暂停再开始。");
+    } else {
+      setStatus("busy", "云端正在处理上一段，已保留最新语音片段继续追赶。");
+    }
+  }
+
   audioQueue.push({
     audioBase64,
-    mimeType: blob.type || "audio/webm"
+    mimeType: blob.type || "audio/wav"
   });
+
   processAudioQueue();
 }
 
@@ -282,19 +366,36 @@ async function startListening() {
   }
 
   try {
+    await window.subtitleApp.resetBackend().catch(() => {});
+
     const permissionStatus = await window.subtitleApp.getMicrophoneStatus();
     if (permissionStatus === "denied" || permissionStatus === "restricted") {
-      setStatus("idle", "系统麦克风权限被关闭，请在 Windows 设置里允许麦克风");
+      setStatus("idle", "系统麦克风权限被关闭，请先去 Windows 设置里开启。");
       return;
     }
 
-    mediaStream = await navigator.mediaDevices.getUserMedia({
-      audio: {
-        echoCancellation: true,
-        noiseSuppression: true,
-        autoGainControl: true
-      }
-    });
+    if (settings.backendMode === "mimo" && !settings.mimoApiKey?.trim()) {
+      setStatus("idle", "MiMo 模式需要先填写 API Key。");
+      settingsPanel.classList.remove("hidden");
+      syncLayoutMode();
+      return;
+    }
+
+    if (settings.audioSource === "system") {
+      setStatus("busy", "正在请求系统声音采集权限...");
+      mediaStream = await navigator.mediaDevices.getDisplayMedia({
+        video: false,
+        audio: true
+      });
+    } else {
+      mediaStream = await navigator.mediaDevices.getUserMedia({
+        audio: {
+          echoCancellation: true,
+          noiseSuppression: true,
+          autoGainControl: true
+        }
+      });
+    }
 
     audioContext = new AudioContext();
     sourceNode = audioContext.createMediaStreamSource(mediaStream);
@@ -313,6 +414,10 @@ async function startListening() {
     processorNode.connect(audioContext.destination);
 
     listening = true;
+    processingQueue = false;
+    requestInFlight = false;
+    consecutiveErrors = 0;
+    droppedChunkCount = 0;
     lastTranscript = "";
     audioQueue.length = 0;
     pcmChunks = [];
@@ -327,17 +432,22 @@ async function startListening() {
   } catch (error) {
     console.error(error);
     const message = error?.name === "NotAllowedError"
-      ? "麦克风权限被拒绝，请在 Windows 设置里允许麦克风"
-      : "麦克风启动失败，请检查输入设备";
+      ? "麦克风权限被拒绝，请去 Windows 设置里允许麦克风访问。"
+      : "麦克风启动失败，请检查输入设备。";
     setStatus("idle", message);
   }
 }
 
 function stopListening() {
+  window.subtitleApp.resetBackend().catch(() => {});
   flushPcmChunk().catch((error) => {
     console.error(error);
   });
   listening = false;
+  processingQueue = false;
+  requestInFlight = false;
+  consecutiveErrors = 0;
+  droppedChunkCount = 0;
   if (chunkTimer) {
     window.clearInterval(chunkTimer);
     chunkTimer = null;
@@ -357,6 +467,7 @@ function stopListening() {
 
 settingsToggle.addEventListener("click", () => {
   settingsPanel.classList.toggle("hidden");
+  syncLayoutMode();
 });
 
 pinToggle.addEventListener("click", async () => {
@@ -372,6 +483,16 @@ stopButton.addEventListener("click", stopListening);
 minimizeButton.addEventListener("click", () => window.subtitleApp.minimize());
 closeButton.addEventListener("click", () => window.subtitleApp.close());
 
+backendModeSelect.addEventListener("change", async (event) => {
+  settings.backendMode = event.target.value;
+  await persistSettings();
+});
+
+audioSourceSelect.addEventListener("change", async (event) => {
+  settings.audioSource = event.target.value;
+  await persistSettings();
+});
+
 pythonPathInput.addEventListener("change", async (event) => {
   settings.pythonPath = event.target.value.trim() || "python";
   await persistSettings();
@@ -382,10 +503,25 @@ whisperModelInput.addEventListener("change", async (event) => {
   await persistSettings();
 });
 
+apiBaseUrlInput.addEventListener("change", async (event) => {
+  settings.apiBaseUrl = event.target.value.trim() || "https://api.xiaomimimo.com/v1";
+  await persistSettings();
+});
+
+cloudModelInput.addEventListener("change", async (event) => {
+  settings.cloudModel = event.target.value.trim() || "mimo-v2-omni";
+  await persistSettings();
+});
+
+mimoApiKeyInput.addEventListener("change", async (event) => {
+  settings.mimoApiKey = event.target.value.trim();
+  await persistSettings();
+});
+
 showOriginalToggle.addEventListener("change", async (event) => {
   settings.showOriginal = event.target.checked;
   await persistSettings();
-  renderSubtitles();
+  renderSubtitle();
 });
 
 fontScaleRange.addEventListener("input", async (event) => {
@@ -416,6 +552,8 @@ window.addEventListener("beforeunload", () => {
   }
 });
 
+window.addEventListener("resize", syncCompactWindowMode);
+
 loadSettings().catch((error) => {
   console.error(error);
   settings = {
@@ -425,15 +563,29 @@ loadSettings().catch((error) => {
     fontScale: 1,
     chunkMs: 3200,
     whisperModel: "medium",
-    pythonPath: "python"
+    pythonPath: "python",
+    backendMode: "local",
+    audioSource: "microphone",
+    apiBaseUrl: "https://api.xiaomimimo.com/v1",
+    mimoApiKey: "",
+    cloudModel: "mimo-v2-omni"
   };
+  audioSourceSelect.value = settings.audioSource;
+  backendModeSelect.value = settings.backendMode;
   pythonPathInput.value = settings.pythonPath;
   whisperModelInput.value = settings.whisperModel;
+  apiBaseUrlInput.value = settings.apiBaseUrl;
+  cloudModelInput.value = settings.cloudModel;
+  mimoApiKeyInput.value = settings.mimoApiKey;
   showOriginalToggle.checked = settings.showOriginal;
   fontScaleRange.value = settings.fontScale;
   opacityRange.value = settings.opacity;
   chunkRange.value = settings.chunkMs;
   chunkHint.textContent = formatChunkHint(settings.chunkMs);
-  renderSubtitles();
+  syncSettingsVisibility();
+  syncLayoutMode();
+  renderSubtitle();
   setStatus("idle", "已使用默认设置启动");
 });
+
+syncCompactWindowMode();

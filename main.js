@@ -12,12 +12,16 @@ const DEFAULT_SETTINGS = {
   opacity: 0.94,
   alwaysOnTop: true,
   fontScale: 1,
-  chunkMs: 4500,
+  chunkMs: 3200,
+  audioSource: "microphone",
   sourceLanguage: "English",
   targetLanguage: "Simplified Chinese",
   backendMode: "local",
   whisperModel: "medium",
-  pythonPath: "python"
+  pythonPath: "python",
+  apiBaseUrl: "https://api.xiaomimimo.com/v1",
+  mimoApiKey: "",
+  cloudModel: "mimo-v2-omni"
 };
 
 let mainWindow;
@@ -27,6 +31,14 @@ let backendBuffer = "";
 let nextRequestId = 1;
 let isQuitting = false;
 const pendingBackendRequests = new Map();
+const BACKEND_REQUEST_TIMEOUT_MS = 45000;
+
+function getWindowIconPath() {
+  if (app.isPackaged) {
+    return path.join(process.resourcesPath, "build", "app-icon.ico");
+  }
+  return path.join(__dirname, "build", "app-icon.ico");
+}
 
 function getSettingsPath() {
   return path.join(app.getPath("userData"), "settings.json");
@@ -60,16 +72,18 @@ async function saveSettings(nextSettings) {
 function createWindow() {
   mainWindow = new BrowserWindow({
     width: 1120,
-    height: 680,
+    height: 360,
     minWidth: 820,
-    minHeight: 520,
+    minHeight: 120,
+    resizable: true,
     frame: false,
     transparent: true,
     backgroundColor: "#00000000",
     alwaysOnTop: true,
     skipTaskbar: false,
     autoHideMenuBar: true,
-    title: "Subtitle Live Translator",
+    title: "",
+    icon: getWindowIconPath(),
     webPreferences: {
       preload: path.join(__dirname, "preload.js"),
       contextIsolation: true,
@@ -90,17 +104,37 @@ function createWindow() {
 function registerPermissionHandlers() {
   session.defaultSession.setPermissionRequestHandler(
     (_webContents, permission, callback) => {
-      callback(permission === "media" || permission === "microphone");
+      callback(
+        permission === "media" ||
+        permission === "microphone" ||
+        permission === "display-capture"
+      );
     }
   );
 
   session.defaultSession.setPermissionCheckHandler(
-    (_webContents, permission) => permission === "media" || permission === "microphone"
+    (_webContents, permission) =>
+      permission === "media" ||
+      permission === "microphone" ||
+      permission === "display-capture"
   );
+
+  session.defaultSession.setDisplayMediaRequestHandler((_request, callback) => {
+    callback({
+      video: false,
+      audio: "loopback",
+    });
+  });
 }
 
 function getBackendKey(settings) {
-  return `${settings.pythonPath || "python"}::${settings.whisperModel || "small"}`;
+  return [
+    settings.pythonPath || "python",
+    settings.whisperModel || "small",
+    settings.backendMode || "local",
+    settings.apiBaseUrl || "",
+    settings.cloudModel || ""
+  ].join("::");
 }
 
 function stopLocalBackend({ rejectPending = false } = {}) {
@@ -113,11 +147,14 @@ function stopLocalBackend({ rejectPending = false } = {}) {
   backendKey = "";
   backendBuffer = "";
 
-  for (const { reject, resolve } of pendingBackendRequests.values()) {
+  for (const request of pendingBackendRequests.values()) {
+    if (request.timeoutId) {
+      clearTimeout(request.timeoutId);
+    }
     if (rejectPending) {
-      reject(new Error("Local backend stopped."));
+      request.reject(new Error("Local backend stopped."));
     } else {
-      resolve({ transcript: "", translation: "", cancelled: true });
+      request.resolve({ transcript: "", translation: "", cancelled: true });
     }
   }
 
@@ -168,6 +205,9 @@ function startLocalBackend(settings) {
       }
 
       pendingBackendRequests.delete(message.id);
+      if (request.timeoutId) {
+        clearTimeout(request.timeoutId);
+      }
 
       if (message.error) {
         request.reject(new Error(message.error));
@@ -185,8 +225,11 @@ function startLocalBackend(settings) {
   });
 
   backendProcess.on("error", (error) => {
-    for (const { reject } of pendingBackendRequests.values()) {
-      reject(error);
+    for (const request of pendingBackendRequests.values()) {
+      if (request.timeoutId) {
+        clearTimeout(request.timeoutId);
+      }
+      request.reject(error);
     }
     pendingBackendRequests.clear();
   });
@@ -200,8 +243,11 @@ function startLocalBackend(settings) {
       ? "Local backend closed."
       : `Local backend failed with exit code ${code}.`;
 
-    for (const { reject } of pendingBackendRequests.values()) {
-      reject(new Error(message));
+    for (const request of pendingBackendRequests.values()) {
+      if (request.timeoutId) {
+        clearTimeout(request.timeoutId);
+      }
+      request.reject(new Error(message));
     }
 
     pendingBackendRequests.clear();
@@ -226,9 +272,20 @@ async function invokeLocalBackend(payload) {
   });
 
   return new Promise((resolve, reject) => {
-    pendingBackendRequests.set(id, { resolve, reject });
+    const timeoutId = setTimeout(() => {
+      if (!pendingBackendRequests.has(id)) {
+        return;
+      }
+
+      pendingBackendRequests.delete(id);
+      stopLocalBackend({ rejectPending: true });
+      reject(new Error("Backend request timed out and was reset."));
+    }, BACKEND_REQUEST_TIMEOUT_MS);
+
+    pendingBackendRequests.set(id, { resolve, reject, timeoutId });
     child.stdin.write(`${request}\n`, "utf8", (error) => {
       if (error) {
+        clearTimeout(timeoutId);
         pendingBackendRequests.delete(id);
         reject(error);
       }
@@ -309,6 +366,11 @@ ipcMain.handle("window:close", async () => {
   app.quit();
 });
 
+ipcMain.handle("backend:reset", async () => {
+  stopLocalBackend({ rejectPending: true });
+  return { ok: true };
+});
+
 ipcMain.handle("system:microphone-status", async () => {
   if (process.platform !== "win32") {
     return "unknown";
@@ -321,6 +383,7 @@ ipcMain.handle("audio:transcribe-translate", async (_event, payload) => {
   const result = await invokeLocalBackend(payload);
   return {
     transcript: result.transcript || "",
-    translation: result.translation || ""
+    translation: result.translation || "",
+    sourceLanguage: result.source_language || ""
   };
 });

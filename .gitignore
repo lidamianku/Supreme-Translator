@@ -2,3 +2,5 @@ node_modules
 dist
 .env
 *.log
+.playwright-mcp
+src/backend/__pycache__

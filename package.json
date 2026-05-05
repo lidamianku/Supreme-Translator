@@ -1,7 +1,40 @@
 {
-  "name": "subtitle-live-translator",
-  "version": "0.2.0",
-  "description": "A local Windows desktop app for live English-to-Chinese subtitle translation.",
+  "name": "supreme-translator",
+  "version": "0.3.0",
+  "description": "A Windows desktop app for live bilingual subtitle translation with local and MiMo cloud modes.",
   "main": "main.js",
-  "type": "module"
+  "type": "module",
+  "author": "lidamianku",
+  "scripts": {
+    "dev": "electron .",
+    "package:win": "electron-builder --win portable"
+  },
+  "devDependencies": {
+    "electron": "^35.0.0",
+    "electron-builder": "^26.0.12"
+  },
+  "build": {
+    "appId": "com.lidamianku.supreme-translator",
+    "productName": "Supreme Translator",
+    "directories": {
+      "output": "dist"
+    },
+    "extraMetadata": {
+      "main": "main.js"
+    },
+    "files": [
+      "main.js",
+      "preload.js",
+      "build/**/*",
+      "src/**/*",
+      "package.json"
+    ],
+    "npmRebuild": false,
+    "win": {
+      "icon": "build/app-icon.ico",
+      "target": [
+        "portable"
+      ]
+    }
+  }
 }

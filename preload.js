@@ -9,6 +9,7 @@ contextBridge.exposeInMainWorld("subtitleApp", {
   minimize: () => ipcRenderer.invoke("window:minimize"),
   close: () => ipcRenderer.invoke("window:close"),
   getMicrophoneStatus: () => ipcRenderer.invoke("system:microphone-status"),
+  resetBackend: () => ipcRenderer.invoke("backend:reset"),
   transcribeAndTranslate: (payload) =>
     ipcRenderer.invoke("audio:transcribe-translate", payload)
 });
