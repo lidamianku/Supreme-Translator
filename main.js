@@ -32,6 +32,7 @@ let nextRequestId = 1;
 let isQuitting = false;
 const pendingBackendRequests = new Map();
 const BACKEND_REQUEST_TIMEOUT_MS = 45000;
+const WINDOW_CORNER_RADIUS = 16;
 
 function getWindowIconPath() {
   if (app.isPackaged) {
@@ -42,6 +43,51 @@ function getWindowIconPath() {
 
 function getSettingsPath() {
   return path.join(app.getPath("userData"), "settings.json");
+}
+
+function buildRoundedWindowShape(width, height, radius) {
+  const safeRadius = Math.max(
+    0,
+    Math.min(radius, Math.floor(width / 2), Math.floor(height / 2))
+  );
+
+  if (safeRadius === 0) {
+    return [{ x: 0, y: 0, width, height }];
+  }
+
+  const rects = [];
+
+  for (let y = 0; y < safeRadius; y += 1) {
+    const distance = safeRadius - y - 0.5;
+    const inset = Math.max(
+      0,
+      Math.ceil(safeRadius - Math.sqrt(safeRadius * safeRadius - distance * distance))
+    );
+    const rowWidth = Math.max(1, width - inset * 2);
+
+    rects.push({ x: inset, y, width: rowWidth, height: 1 });
+    rects.push({ x: inset, y: height - y - 1, width: rowWidth, height: 1 });
+  }
+
+  const middleHeight = height - safeRadius * 2;
+  if (middleHeight > 0) {
+    rects.push({ x: 0, y: safeRadius, width, height: middleHeight });
+  }
+
+  return rects;
+}
+
+function applyRoundedWindowShape(win) {
+  if (!win || typeof win.setShape !== "function") {
+    return;
+  }
+
+  const [width, height] = win.getSize();
+  if (width <= 0 || height <= 0) {
+    return;
+  }
+
+  win.setShape(buildRoundedWindowShape(width, height, WINDOW_CORNER_RADIUS));
 }
 
 async function ensureSettingsFile() {
@@ -77,11 +123,13 @@ function createWindow() {
     minHeight: 120,
     resizable: true,
     frame: false,
-    transparent: true,
-    backgroundColor: "#00000000",
+    thickFrame: false,
+    transparent: false,
+    backgroundColor: "#10141a",
     alwaysOnTop: true,
     skipTaskbar: false,
     autoHideMenuBar: true,
+    hasShadow: false,
     title: "",
     icon: getWindowIconPath(),
     webPreferences: {
@@ -92,12 +140,23 @@ function createWindow() {
     }
   });
 
+  mainWindow.setTitle("");
+  mainWindow.removeMenu();
+  mainWindow.on("page-title-updated", (event) => {
+    event.preventDefault();
+  });
+
   mainWindow.loadFile(path.join(__dirname, "src", "renderer", "index.html"));
 
   mainWindow.once("ready-to-show", async () => {
     const settings = await loadSettings();
+    applyRoundedWindowShape(mainWindow);
     mainWindow?.setOpacity(settings.opacity);
     mainWindow?.setAlwaysOnTop(Boolean(settings.alwaysOnTop), "screen-saver");
+  });
+
+  mainWindow.on("resize", () => {
+    applyRoundedWindowShape(mainWindow);
   });
 }
 
