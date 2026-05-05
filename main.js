@@ -33,6 +33,7 @@ let isQuitting = false;
 const pendingBackendRequests = new Map();
 const BACKEND_REQUEST_TIMEOUT_MS = 45000;
 const WINDOW_CORNER_RADIUS = 16;
+const BACKEND_STOP_SENTINEL = "__BACKEND_STOPPED_BY_APP__";
 
 function getWindowIconPath() {
   if (app.isPackaged) {
@@ -225,7 +226,7 @@ function stopLocalBackend({ rejectPending = false } = {}) {
       clearTimeout(request.timeoutId);
     }
     if (rejectPending) {
-      request.reject(new Error("Local backend stopped."));
+      request.reject(new Error(BACKEND_STOP_SENTINEL));
     } else {
       request.resolve({ transcript: "", translation: "", cancelled: true });
     }

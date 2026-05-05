@@ -104,7 +104,7 @@ select {
 
 .content.content-collapsed .subtitle-card {
   width: 100%;
-  max-width: min(94%, 1180px);
+  max-width: 100%;
 }
 
 .content.content-collapsed .original-line,
@@ -136,6 +136,7 @@ select {
   justify-content: flex-start;
   padding: 8px 6px 8px 18px;
   overflow: hidden;
+  scrollbar-width: none;
 }
 
 .subtitle-list::-webkit-scrollbar,
@@ -156,8 +157,8 @@ select {
 
 .subtitle-card {
   margin: 0;
-  width: fit-content;
-  max-width: min(96%, 1120px);
+  width: 100%;
+  max-width: 100%;
   min-width: 0;
   padding: 0;
   border-radius: 0;
@@ -169,15 +170,15 @@ select {
 }
 
 .subtitle-card[data-size="compact"] {
-  max-width: min(60%, 720px);
+  max-width: min(100%, 720px);
 }
 
 .subtitle-card[data-size="medium"] {
-  max-width: min(82%, 980px);
+  max-width: min(100%, 980px);
 }
 
 .subtitle-card[data-size="wide"] {
-  max-width: min(96%, 1120px);
+  max-width: 100%;
 }
 
 .original-line,
@@ -185,6 +186,7 @@ select {
   margin: 0;
   line-height: 1.38;
   word-break: break-word;
+  overflow-wrap: anywhere;
   text-align: left;
 }
 
@@ -208,6 +210,7 @@ select {
   gap: 14px;
   min-height: 0;
   overflow: auto;
+  scrollbar-width: thin;
 }
 
 .settings-panel.hidden {
@@ -367,7 +370,7 @@ select {
 @media (max-width: 980px) {
   .content {
     grid-template-columns: 1fr;
-    overflow: auto;
+    overflow: hidden;
   }
 }
 
@@ -377,15 +380,21 @@ body.compact-window .stage-label {
   display: none;
 }
 
+body.compact-window {
+  overflow: hidden;
+}
+
 body.compact-window .content {
   display: block;
   padding: 0 12px 4px;
   -webkit-app-region: drag;
+  overflow: hidden;
 }
 
 body.compact-window .subtitle-stage {
   min-height: 100%;
   -webkit-app-region: drag;
+  overflow: hidden;
 }
 
 body.compact-window .subtitle-list {
@@ -394,17 +403,22 @@ body.compact-window .subtitle-list {
   justify-content: center;
   padding: 0;
   -webkit-app-region: drag;
+  overflow: hidden;
 }
 
 body.compact-window .subtitle-card {
-  max-width: min(96%, 960px);
+  width: 100%;
+  max-width: 100%;
   -webkit-app-region: drag;
+  overflow: hidden;
 }
 
 body.compact-window .original-line,
 body.compact-window .translated-line {
   text-align: center;
   -webkit-app-region: drag;
+  max-height: 2.9em;
+  overflow: hidden;
 }
 
 body.compact-window .translated-line {

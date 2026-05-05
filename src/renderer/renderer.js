@@ -48,6 +48,11 @@ const MAX_CONSECUTIVE_ERRORS = 4;
 const DEFAULT_FONT_SCALE = 0.5;
 const DEFAULT_CHUNK_MS = 4600;
 const DEFAULT_BACKEND_MODE = "mimo";
+const BACKEND_STOP_SENTINEL = "__BACKEND_STOPPED_BY_APP__";
+const SILENCE_RMS_THRESHOLD = 0.02;
+const SILENCE_PEAK_THRESHOLD = 0.09;
+const ACTIVE_SAMPLE_THRESHOLD = 0.015;
+const MIN_ACTIVE_SAMPLE_RATIO = 0.08;
 
 function syncCompactWindowMode() {
   const compact = window.innerHeight <= 210;
@@ -82,6 +87,34 @@ function mergeFloat32Chunks(chunks) {
   }
 
   return merged;
+}
+
+function measureAudioLevel(samples) {
+  if (!samples || samples.length === 0) {
+    return { rms: 0, peak: 0, activeRatio: 0 };
+  }
+
+  let sumSquares = 0;
+  let peak = 0;
+  let activeCount = 0;
+
+  for (let index = 0; index < samples.length; index += 1) {
+    const value = samples[index];
+    const abs = Math.abs(value);
+    sumSquares += value * value;
+    if (abs >= ACTIVE_SAMPLE_THRESHOLD) {
+      activeCount += 1;
+    }
+    if (abs > peak) {
+      peak = abs;
+    }
+  }
+
+  return {
+    rms: Math.sqrt(sumSquares / samples.length),
+    peak,
+    activeRatio: activeCount / samples.length
+  };
 }
 
 function encodeWav(samples, sampleRate) {
@@ -294,6 +327,13 @@ async function processAudioQueue() {
       setStatus("listening", "正在监听...");
     } catch (error) {
       requestInFlight = false;
+      if (error?.message === BACKEND_STOP_SENTINEL) {
+        if (!listening) {
+          break;
+        }
+        continue;
+      }
+
       console.error(error);
       consecutiveErrors += 1;
 
@@ -376,6 +416,16 @@ async function flushPcmChunk() {
   pcmChunks = [];
 
   if (merged.length === 0) {
+    return;
+  }
+
+  const { rms, peak, activeRatio } = measureAudioLevel(merged);
+  const looksLikeSilence =
+    activeRatio < MIN_ACTIVE_SAMPLE_RATIO &&
+    (rms < SILENCE_RMS_THRESHOLD || peak < SILENCE_PEAK_THRESHOLD);
+
+  if (looksLikeSilence) {
+    setStatus("listening", "正在监听...");
     return;
   }
 
