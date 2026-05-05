@@ -36,14 +36,15 @@
             <select id="audioSourceSelect">
               <option value="microphone">麦克风</option>
               <option value="system">系统声音（浏览器/播放器/本机软件）</option>
+              <option value="both">麦克风 + 系统声音同时识别</option>
             </select>
           </div>
 
           <div class="settings-group">
             <label for="backendModeSelect">识别模式</label>
             <select id="backendModeSelect">
-              <option value="local">本地模型（Whisper + Argos）</option>
               <option value="mimo">MiMo-V2-Omni 云端模式</option>
+              <option value="local">本地模型（Whisper + Argos）</option>
             </select>
           </div>
 
@@ -104,7 +105,7 @@
 
           <div class="settings-group">
             <label for="fontScaleRange">字幕大小</label>
-            <input id="fontScaleRange" type="range" min="0.85" max="1.35" step="0.05" />
+            <input id="fontScaleRange" type="range" min="0.5" max="1.35" step="0.05" />
           </div>
 
           <div class="settings-group">

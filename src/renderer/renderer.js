@@ -24,8 +24,11 @@ const closeButton = document.getElementById("closeButton");
 
 let settings = null;
 let mediaStream = null;
+let systemMediaStream = null;
 let audioContext = null;
 let sourceNode = null;
+let systemSourceNode = null;
+let mixGainNode = null;
 let processorNode = null;
 let chunkTimer = null;
 let listening = false;
@@ -42,6 +45,9 @@ const audioQueue = [];
 let pcmChunks = [];
 const MAX_AUDIO_QUEUE = 1;
 const MAX_CONSECUTIVE_ERRORS = 4;
+const DEFAULT_FONT_SCALE = 0.5;
+const DEFAULT_CHUNK_MS = 4600;
+const DEFAULT_BACKEND_MODE = "mimo";
 
 function syncCompactWindowMode() {
   const compact = window.innerHeight <= 210;
@@ -62,7 +68,7 @@ function normalizeText(text) {
 }
 
 function formatChunkHint(chunkMs) {
-  return `每 ${Number(chunkMs) / 1000} 秒发送一段语音`;
+  return `每 ${(Number(chunkMs) / 1000).toFixed(1)} 秒发送一段语音`;
 }
 
 function mergeFloat32Chunks(chunks) {
@@ -178,16 +184,32 @@ async function persistSettings() {
 
 async function loadSettings() {
   settings = await window.subtitleApp.loadSettings();
+
   if (settings.whisperModel === "base" && settings.chunkMs === 3200) {
     settings.whisperModel = "medium";
-    settings = await window.subtitleApp.saveSettings(settings);
   }
   if (settings.whisperModel === "small") {
     settings.whisperModel = "medium";
-    settings = await window.subtitleApp.saveSettings(settings);
+  }
+  if (typeof settings.fontScale !== "number" || Number.isNaN(settings.fontScale)) {
+    settings.fontScale = DEFAULT_FONT_SCALE;
+  }
+  if (settings.fontScale < 0.5) {
+    settings.fontScale = DEFAULT_FONT_SCALE;
+  }
+  if (typeof settings.chunkMs !== "number" || Number.isNaN(settings.chunkMs)) {
+    settings.chunkMs = DEFAULT_CHUNK_MS;
+  }
+  if (settings.chunkMs === 3200) {
+    settings.chunkMs = DEFAULT_CHUNK_MS;
+  }
+  if (!settings.backendMode || settings.backendMode === "local") {
+    settings.backendMode = DEFAULT_BACKEND_MODE;
   }
 
-  backendModeSelect.value = settings.backendMode || "local";
+  settings = await window.subtitleApp.saveSettings(settings);
+
+  backendModeSelect.value = settings.backendMode || DEFAULT_BACKEND_MODE;
   audioSourceSelect.value = settings.audioSource || "microphone";
   pythonPathInput.value = settings.pythonPath || "python";
   whisperModelInput.value = settings.whisperModel || "medium";
@@ -195,19 +217,21 @@ async function loadSettings() {
   cloudModelInput.value = settings.cloudModel || "mimo-v2-omni";
   mimoApiKeyInput.value = settings.mimoApiKey || "";
   showOriginalToggle.checked = settings.showOriginal;
-  fontScaleRange.value = settings.fontScale;
-  opacityRange.value = settings.opacity;
-  chunkRange.value = settings.chunkMs;
+  fontScaleRange.value = String(settings.fontScale);
+  opacityRange.value = String(settings.opacity);
+  chunkRange.value = String(settings.chunkMs);
   chunkHint.textContent = formatChunkHint(settings.chunkMs);
   pinToggle.classList.toggle("is-active", Boolean(settings.alwaysOnTop));
   document.documentElement.style.setProperty("--font-scale", String(settings.fontScale));
   syncSettingsVisibility();
+
   try {
     await window.subtitleApp.setOpacity(settings.opacity);
     await window.subtitleApp.setAlwaysOnTop(Boolean(settings.alwaysOnTop));
   } catch (error) {
     console.warn("Window settings were loaded, but one window option failed", error);
   }
+
   renderSubtitle();
   setStatus("idle", "准备就绪");
 }
@@ -290,7 +314,6 @@ async function processAudioQueue() {
         ? "MiMo 请求失败，已跳过这一段并继续监听。"
         : "本地识别失败，已跳过这一段并继续监听。";
       const detail = error?.message ? ` ${error.message}` : "";
-
       setStatus("listening", `${fallbackText}${detail}`);
     }
   }
@@ -360,6 +383,51 @@ async function flushPcmChunk() {
   await handleChunk(wavBlob);
 }
 
+async function captureMicrophoneStream() {
+  return navigator.mediaDevices.getUserMedia({
+    audio: {
+      echoCancellation: true,
+      noiseSuppression: true,
+      autoGainControl: true
+    }
+  });
+}
+
+async function captureSystemStream() {
+  return navigator.mediaDevices.getDisplayMedia({
+    video: false,
+    audio: true
+  });
+}
+
+function createMixedInputGraph() {
+  processorNode = audioContext.createScriptProcessor(4096, 1, 1);
+  mixGainNode = audioContext.createGain();
+  mixGainNode.gain.value = 1;
+
+  processorNode.onaudioprocess = (event) => {
+    if (!listening) {
+      return;
+    }
+
+    const input = event.inputBuffer.getChannelData(0);
+    pcmChunks.push(new Float32Array(input));
+  };
+
+  if (mediaStream) {
+    sourceNode = audioContext.createMediaStreamSource(mediaStream);
+    sourceNode.connect(mixGainNode);
+  }
+
+  if (systemMediaStream) {
+    systemSourceNode = audioContext.createMediaStreamSource(systemMediaStream);
+    systemSourceNode.connect(mixGainNode);
+  }
+
+  mixGainNode.connect(processorNode);
+  processorNode.connect(audioContext.destination);
+}
+
 async function startListening() {
   if (listening) {
     return;
@@ -369,7 +437,10 @@ async function startListening() {
     await window.subtitleApp.resetBackend().catch(() => {});
 
     const permissionStatus = await window.subtitleApp.getMicrophoneStatus();
-    if (permissionStatus === "denied" || permissionStatus === "restricted") {
+    if (
+      (settings.audioSource === "microphone" || settings.audioSource === "both") &&
+      (permissionStatus === "denied" || permissionStatus === "restricted")
+    ) {
       setStatus("idle", "系统麦克风权限被关闭，请先去 Windows 设置里开启。");
       return;
     }
@@ -383,35 +454,17 @@ async function startListening() {
 
     if (settings.audioSource === "system") {
       setStatus("busy", "正在请求系统声音采集权限...");
-      mediaStream = await navigator.mediaDevices.getDisplayMedia({
-        video: false,
-        audio: true
-      });
+      systemMediaStream = await captureSystemStream();
+    } else if (settings.audioSource === "both") {
+      setStatus("busy", "正在请求麦克风和系统声音权限...");
+      mediaStream = await captureMicrophoneStream();
+      systemMediaStream = await captureSystemStream();
     } else {
-      mediaStream = await navigator.mediaDevices.getUserMedia({
-        audio: {
-          echoCancellation: true,
-          noiseSuppression: true,
-          autoGainControl: true
-        }
-      });
+      mediaStream = await captureMicrophoneStream();
     }
 
     audioContext = new AudioContext();
-    sourceNode = audioContext.createMediaStreamSource(mediaStream);
-    processorNode = audioContext.createScriptProcessor(4096, 1, 1);
-
-    processorNode.onaudioprocess = (event) => {
-      if (!listening) {
-        return;
-      }
-
-      const input = event.inputBuffer.getChannelData(0);
-      pcmChunks.push(new Float32Array(input));
-    };
-
-    sourceNode.connect(processorNode);
-    processorNode.connect(audioContext.destination);
+    createMixedInputGraph();
 
     listening = true;
     processingQueue = false;
@@ -426,14 +479,15 @@ async function startListening() {
         console.error(error);
       });
     }, settings.chunkMs);
+
     startButton.disabled = true;
     stopButton.disabled = false;
     setStatus("listening", "正在监听...");
   } catch (error) {
     console.error(error);
     const message = error?.name === "NotAllowedError"
-      ? "麦克风权限被拒绝，请去 Windows 设置里允许麦克风访问。"
-      : "麦克风启动失败，请检查输入设备。";
+      ? "音频权限被拒绝，请去 Windows 设置里允许访问。"
+      : "音频启动失败，请检查输入设备或系统声音权限。";
     setStatus("idle", message);
   }
 }
@@ -443,23 +497,36 @@ function stopListening() {
   flushPcmChunk().catch((error) => {
     console.error(error);
   });
+
   listening = false;
   processingQueue = false;
   requestInFlight = false;
   consecutiveErrors = 0;
   droppedChunkCount = 0;
+
   if (chunkTimer) {
     window.clearInterval(chunkTimer);
     chunkTimer = null;
   }
+
   processorNode?.disconnect();
   sourceNode?.disconnect();
+  systemSourceNode?.disconnect();
+  mixGainNode?.disconnect();
+
   processorNode = null;
   sourceNode = null;
+  systemSourceNode = null;
+  mixGainNode = null;
+
   audioContext?.close().catch(() => {});
   audioContext = null;
+
   mediaStream?.getTracks().forEach((track) => track.stop());
+  systemMediaStream?.getTracks().forEach((track) => track.stop());
   mediaStream = null;
+  systemMediaStream = null;
+
   startButton.disabled = false;
   stopButton.disabled = true;
   setStatus("idle", "已停止");
@@ -546,9 +613,14 @@ window.addEventListener("beforeunload", () => {
   }
   processorNode?.disconnect();
   sourceNode?.disconnect();
+  systemSourceNode?.disconnect();
+  mixGainNode?.disconnect();
   audioContext?.close().catch(() => {});
   if (mediaStream) {
     mediaStream.getTracks().forEach((track) => track.stop());
+  }
+  if (systemMediaStream) {
+    systemMediaStream.getTracks().forEach((track) => track.stop());
   }
 });
 
@@ -560,11 +632,11 @@ loadSettings().catch((error) => {
     showOriginal: true,
     opacity: 0.94,
     alwaysOnTop: true,
-    fontScale: 1,
-    chunkMs: 3200,
+    fontScale: DEFAULT_FONT_SCALE,
+    chunkMs: DEFAULT_CHUNK_MS,
     whisperModel: "medium",
     pythonPath: "python",
-    backendMode: "local",
+    backendMode: DEFAULT_BACKEND_MODE,
     audioSource: "microphone",
     apiBaseUrl: "https://api.xiaomimimo.com/v1",
     mimoApiKey: "",
@@ -578,9 +650,9 @@ loadSettings().catch((error) => {
   cloudModelInput.value = settings.cloudModel;
   mimoApiKeyInput.value = settings.mimoApiKey;
   showOriginalToggle.checked = settings.showOriginal;
-  fontScaleRange.value = settings.fontScale;
-  opacityRange.value = settings.opacity;
-  chunkRange.value = settings.chunkMs;
+  fontScaleRange.value = String(settings.fontScale);
+  opacityRange.value = String(settings.opacity);
+  chunkRange.value = String(settings.chunkMs);
   chunkHint.textContent = formatChunkHint(settings.chunkMs);
   syncSettingsVisibility();
   syncLayoutMode();
