@@ -41,6 +41,20 @@ function getWindowIconPath() {
   return path.join(__dirname, "build", "app-icon.ico");
 }
 
+function getBackendScriptPath() {
+  if (app.isPackaged) {
+    return path.join(process.resourcesPath, "src", "backend", "local_backend.py");
+  }
+  return path.join(__dirname, "src", "backend", "local_backend.py");
+}
+
+function getAppWorkingDirectory() {
+  if (app.isPackaged) {
+    return process.resourcesPath;
+  }
+  return __dirname;
+}
+
 function getSettingsPath() {
   return path.join(app.getPath("userData"), "settings.json");
 }
@@ -229,10 +243,10 @@ function startLocalBackend(settings) {
 
   stopLocalBackend({ rejectPending: true });
 
-  const backendScript = path.join(__dirname, "src", "backend", "local_backend.py");
+  const backendScript = getBackendScriptPath();
 
   backendProcess = spawn(settings.pythonPath || "python", [backendScript, "--serve"], {
-    cwd: __dirname,
+    cwd: getAppWorkingDirectory(),
     env: {
       ...process.env,
       PYTHONIOENCODING: "utf-8"
